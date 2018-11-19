@@ -167,9 +167,42 @@ demo_diet = demo %>%
 all_joined = demo_diet %>%
               left_join(depression, by = 'seqn')
 
+all_joined = all_joined %>%
+  select(-c('seqn','ridstatr','wtdrd1.x','wtdr2d.x'))
+
+
+for (i in c(1,4:9,72)){
+  all_joined[,i] = as.factor(all_joined[,i])
+}
+
+for (i in c(2,3,10:71)){
+  all_joined[,i] = as.numeric(all_joined[,i])
+}
+
+
 rm(demo_diet)
 rm(demo)
 rm(diet)
 rm(depression)
-write.csv(all_joined, "2015-16.csv")
+write.csv(all_joined, "2015-16_3.csv")
+```
+
+
+```{r imputation, echo=FALSE, message = FALSE, warning=FALSE}
+N = nrow(all_joined)
+all_joined= all_joined[sample(1:nrow(all_joined)),]
+
+sample_size = floor(0.6 * N)
+set.seed(123)
+train_ind = sample(seq_len(N), size = sample_size)
+train = all_joined[train_ind, ]
+test = all_joined[-train_ind, ]
+
+
+library(mice)  
+train_imputed = mice(train %>% mutate_if(is.character, as.factor),m=1,maxit = 1)  
+IST_train_i = complete(IST_train_imputed) %>% as_tibble()
+names(IST_train_i) = lapply(names(IST_train_i), paste0, "")
+
+imputed_train = data.frame(DORDE = IST_train$DORDE) %>% bind_cols(IST_train_i) %>% as_tibble()
 ```
