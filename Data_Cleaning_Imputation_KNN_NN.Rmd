@@ -1,0 +1,474 @@
+---
+title: "Nhanes Study-- Social Economic Status, Nutrition and Depression"
+output: html_document
+author: Maggie Lu
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Part I. Data Cleaning
+
+Source: Nhanes. using Hmisc to directly transfer the xpt files into dataframes. Can be stored into csv for later purposes
+
+```{r data_cleaning, message = FALSE, warning=FALSE}
+#please change the directory accordingly
+setwd("/Users/Maggie/Documents/School/Fall 2018/Machine Learning") 
+fileDirectory = "/Users/Maggie/Documents/School/Fall 2018/Machine Learning/Project"
+loadlibs = function(libs) {
+  for(lib in libs) {
+    class(lib)
+    if(!do.call(require,as.list(lib))) {install.packages(lib)}
+    do.call(require,as.list(lib))
+  }
+}
+libs = c("tidyr","magrittr","purrr","dplyr","stringr","readr","data.table", "lubridate")
+loadlibs(libs)
+
+library(Hmisc)
+demo_15_16 <- sasxport.get(paste0(fileDirectory, "/DEMO_I_15_16.xpt"))
+diet_1_15_16 <- sasxport.get(paste0(fileDirectory, "/DR1TOT_I_15_16.xpt"))
+diet_2_15_16 <- sasxport.get(paste0(fileDirectory, "/DR2TOT_I_15_16.xpt"))
+depression_15_16 <- sasxport.get(paste0(fileDirectory, "/DPQ_I_15_16.xpt"))
+###cleaning demographic data: only take adults, exclude preganancies
+demo = demo_15_16 %>% 
+  select(c('seqn','ridstatr','riagendr', tolower('WTMEC2YR'),tolower('RIDAGEYR'),tolower('RIDRETH3'),tolower('DMDCITZN'),tolower('DMDEDUC2'),tolower('DMDMARTL'), tolower('RIDEXPRG'),tolower('DMDHHSIZ'),tolower('INDFMIN2'),tolower('INDFMPIR')))
+
+demo$ridageyr = as.numeric(demo$ridageyr)
+demo = demo[demo$ridageyr >= 18,]
+
+demo$ridexprg = as.factor(demo$ridexprg)
+demo$ridexprg = ifelse(is.na(demo$ridexprg),'n',demo$ridexprg)
+demo = demo[demo$ridexprg != '1',]
+demo = demo %>%
+    select(-c(tolower('RIDEXPRG')))
+#take out non mec ones
+demo = demo[demo$wtmec2yr != 0,]
+
+###cleaning dietary data: only take those with DRDINT = 2, also reconcile the different units
+diet1 = diet_1_15_16 %>% 
+  select(c('seqn',tolower('WTDRD1'), tolower('WTDR2D'),tolower('DR1DRSTZ'),tolower('DRDINT'),tolower('DR1TPROT'),tolower('DR1TCARB'),tolower('DR1TSUGR'),tolower('DR1TFIBE'),tolower('DR1TTFAT'),tolower('DR1TSFAT'),tolower('DR1TMFAT'),tolower('DR1TPFAT'),tolower('DR1TCHOL'),tolower('DR1TATOC'), tolower('DR1TATOA'), tolower('DR1TRET'), tolower('DR1TVARA'), tolower('DR1TACAR'), tolower('DR1TBCAR'), tolower('DR1TCRYP'),tolower('DR1TLYCO'), tolower('DR1TLZ'), tolower('DR1TVB1'), tolower('DR1TVB2'), tolower('DR1TNIAC'), tolower('DR1TVB6'), tolower('DR1TFOLA'), tolower('DR1TFA'), tolower('DR1TCHL'),tolower('DR1TVB12'),tolower('DR1TB12A'), tolower('DR1TVC'), tolower('DR1TVD'), tolower('DR1TVK'), tolower('DR1TCALC'), tolower('DR1TPHOS'), tolower('DR1TMAGN'), tolower('DR1TIRON'), tolower('DR1TZINC'), tolower('DR1TCOPP'), tolower('DR1TSODI'), tolower('DR1TPOTA'),tolower('DR1TSELE'), tolower('DR1TCAFF'), tolower('DR1TTHEO'), tolower('DR1TALCO'), tolower('DR1TS040'), tolower('DR1TS060'), tolower('DR1TS080'), tolower('DR1TS100'), tolower('DR1TS120'), tolower('DR1TS140'), tolower('DR1TS160'), tolower('DR1TS180'), tolower('DR1TM161'), tolower('DR1TM181'), tolower('DR1TM201'), tolower('DR1TM221'), tolower('DR1TP182'), tolower('DR1TP183'), tolower('DR1TP184'), tolower('DR1TP204'), tolower('DR1TP205'), tolower('DR1TP225'), tolower('DR1TP226')))
+
+diet1$drdint = as.numeric(diet1$drdint)
+diet1 = diet1[diet1$drdint == 2,]
+
+diet2 = diet_2_15_16 %>% 
+  select(c('seqn',tolower('WTDRD1'), tolower('WTDR2D'),tolower('DR2DRSTZ'),tolower('DRDINT'),tolower('DR2TPROT'),tolower('DR2TCARB'),tolower('DR2TSUGR'),tolower('DR2TFIBE'),tolower('DR2TTFAT'),tolower('DR2TSFAT'),tolower('DR2TMFAT'),tolower('DR2TPFAT'),tolower('DR2TCHOL'),tolower('DR2TATOC'), tolower('DR2TATOA'), tolower('DR2TRET'), tolower('DR2TVARA'), tolower('DR2TACAR'), tolower('DR2TBCAR'), tolower('DR2TCRYP'),tolower('DR2TLYCO'), tolower('DR2TLZ'), tolower('DR2TVB1'), tolower('DR2TVB2'), tolower('DR2TNIAC'), tolower('DR2TVB6'), tolower('DR2TFOLA'), tolower('DR2TFA'), tolower('DR2TCHL'),tolower('DR2TVB12'),tolower('DR2TB12A'), tolower('DR2TVC'), tolower('DR2TVD'), tolower('DR2TVK'), tolower('DR2TCALC'), tolower('DR2TPHOS'), tolower('DR2TMAGN'), tolower('DR2TIRON'), tolower('DR2TZINC'), tolower('DR2TCOPP'), tolower('DR2TSODI'), tolower('DR2TPOTA'),tolower('DR2TSELE'), tolower('DR2TCAFF'), tolower('DR2TTHEO'), tolower('DR2TALCO'), tolower('DR2TS040'), tolower('DR2TS060'), tolower('DR2TS080'), tolower('DR2TS100'), tolower('DR2TS120'), tolower('DR2TS140'), tolower('DR2TS160'), tolower('DR2TS180'), tolower('DR2TM161'), tolower('DR2TM181'), tolower('DR2TM201'), tolower('DR2TM221'), tolower('DR2TP182'), tolower('DR2TP183'), tolower('DR2TP184'), tolower('DR2TP204'), tolower('DR2TP205'), tolower('DR2TP225'), tolower('DR2TP226')))
+
+diet2$drdint = as.numeric(diet2$drdint)
+diet2 = diet2[diet2$drdint == 2,]
+
+
+### a function that normalizes all nutritional values to micrograms
+normalize_values = function(df){
+  for (i in 1: ncol(df)){
+    label_value = label(df[,i])
+    if (grepl("(gm)", label_value, fixed=TRUE)){
+      df[,i] = as.numeric(df[,i])
+      df[,i] = 1000000*df[,i]
+      #label(df[,i]) = substr(label_value,1,nchar(label_value)-4)
+      #attributes(df[,i])$label = substr(label_value,1,nchar(label_value)-4)
+    }
+    if (grepl("(mg)", label_value, fixed=TRUE)){
+      df[,i] = as.numeric(df[,i])
+      df[,i] = 1000*df[,i]
+      #label(df[,i]) = substr(label_value,1,nchar(label_value)-4)
+    }
+    if (grepl("(mcg)", label_value, fixed=TRUE)){
+       df[,i] = as.numeric(df[,i])
+       #label(df[,i]) = substr(label_value,1,nchar(label_value)-5)
+    }
+  }
+}
+
+normalize_values(diet1)
+normalize_values(diet2)
+### now fixing the labels, for some reason I cannot combine this to the above function....
+### make a note that they are all mcg
+for (i in 1: ncol(diet1)){
+  label_value = label(diet1[,i])
+    if(grepl("(gm)",label(diet1[,i]), fixed=TRUE)){
+      label(diet1[,i]) = substr(label_value,1,nchar(label_value)-4)
+    }
+    if(grepl("(mg)",label(diet1[,i]), fixed=TRUE)){
+      label(diet1[,i]) = substr(label_value,1,nchar(label_value)-4)
+    }
+    if(grepl("(mcg)",label(diet1[,i]), fixed=TRUE)){
+      label(diet1[,i]) = substr(label_value,1,nchar(label_value)-5)
+    }
+    #label(diet1[,i]) = 'NULL'
+    #print(label(diet1[,i]))
+}
+
+for (i in 1: ncol(diet2)){
+  label_value = label(diet2[,i])
+    if(grepl("(gm)",label(diet2[,i]), fixed=TRUE)){
+      label(diet2[,i]) = substr(label_value,1,nchar(label_value)-4)
+    }
+    if(grepl("(mg)",label(diet2[,i]), fixed=TRUE)){
+      label(diet2[,i]) = substr(label_value,1,nchar(label_value)-4)
+    }
+    if(grepl("(mcg)",label(diet2[,i]), fixed=TRUE)){
+      label(diet2[,i]) = substr(label_value,1,nchar(label_value)-5)
+    }
+    #label(diet1[,i]) = 'NULL'
+    #print(label(diet1[,i]))
+}
+
+### Join diet tables and get avearge in nutrition
+diet1$seqn = as.factor(diet1$seqn)
+diet2$seqn = as.factor(diet2$seqn)
+diet1 = diet1 %>% as_tibble()
+diet1 = diet1[!is.na(diet1$seqn),]        
+diet2 = diet2 %>% as_tibble()
+diet2 = diet2[!is.na(diet2$seqn),]
+
+diet = diet1 %>% left_join(diet2, by="seqn")
+
+for (i in 6:66){
+  name = names(diet[i])
+  newName = substr(name,5,nchar(name))
+  diet[newName] = (diet[i]+diet[i+65])/2 
+}
+
+### using only 2-day average nutrients in mcg
+diet = diet[,c(1,2,3,132:192)]
+
+
+### for depression score: see https://www.uspreventiveservicestaskforce.org/Home/GetFileByID/218 (PHQ-9 standard)
+depression_15_16[depression_15_16 == 7] = NA
+depression_15_16[depression_15_16 == 9] = NA
+for (i in 2:10){
+  depression_15_16[,i] = as.numeric(depression_15_16[,i])
+}
+depression = na.omit(depression_15_16[,1:10])
+
+depression = depression %>% 
+  mutate(depressed = rowSums(depression[,2:10])) %>%
+  mutate(depression = ifelse(depressed <= 4, 'minimal',ifelse(depressed <= 9, 'mild',ifelse(depressed <=14, 'moderate', ifelse(depressed <= 19, 'moderately severe', 'severe'))))) %>%
+  select(c('seqn','depression'))
+### remove all dataset no longer in use
+rm(demo_15_16)
+rm(depression_15_16)
+rm(diet_1_15_16)
+rm(diet_2_15_16)
+rm(diet1)
+rm(diet2)
+
+
+
+### join all three tables
+demo$seqn = as.character(demo$seqn)
+diet$seqn = as.character(diet$seqn)
+depression$seqn = as.character(depression$seqn)
+demo_diet = demo %>%
+            left_join(diet, by = 'seqn')
+all_joined = demo_diet %>%
+              left_join(depression, by = 'seqn')
+
+all_joined = all_joined %>%
+  select(-c('seqn','ridstatr','wtdrd1.x','wtdr2d.x'))
+
+
+for (i in c(1,4:9,72)){
+  all_joined[,i] = as.factor(all_joined[,i])
+}
+
+for (i in c(2,3,10:71)){
+  all_joined[,i] = as.numeric(all_joined[,i])
+}
+
+
+rm(demo_diet)
+rm(demo)
+rm(diet)
+rm(depression)
+write.csv(all_joined, "2015-16_3.csv")
+```
+
+
+```{r imputation,  message = FALSE, warning=FALSE}
+N = nrow(all_joined)
+all_joined= all_joined[sample(1:nrow(all_joined)),]
+
+sample_size = floor(0.6 * N)
+set.seed(1234)
+train_ind = sample(seq_len(N), size = sample_size)
+train = all_joined[train_ind, ]
+test = all_joined[-train_ind, ]
+
+
+library(mice)  
+train_imputed = mice(train%>% 
+                          select(-depression),m = 1, maxit = 1, nnet.MaxNWts = 3000)
+train_imputed_i = complete(train_imputed) %>% as_tibble()
+names(train_imputed_i) = lapply(names(train_imputed_i), paste0, "")
+
+imputed_train = data.frame(depression = train$depression) %>% bind_cols(train_imputed_i) %>% as_tibble()
+```
+
+```{r k-NN,  message = FALSE, warning = FALSE}
+### step 1: what if we only look at nutritional data?
+imputed_train_nutri = imputed_train[,c(1,2,4,12:72)]
+test_nutri = test[,c(1,3,11:72)]
+# create table for gender
+imputed_train_nutri = imputed_train_nutri %>% 
+                      mutate(male = ifelse(riagendr == '1',1,0)) %>%
+                      mutate(female = ifelse(riagendr == '2',1,0)) %>%
+                      select(-riagendr)
+
+
+imputed_train_nutri[["depression"]] = factor(imputed_train_nutri[["depression"]])
+
+library(caret)
+set.seed(3333)
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+knn_fit <- train(depression ~., data = na.omit(imputed_train_nutri), method = "knn",
+ trControl=trctrl,
+ preProcess = c("center", "scale"),
+ tuneLength = 10)
+
+knn_fit
+
+test_nutri = test_nutri %>% 
+       mutate(male = ifelse(riagendr == '1',1,0)) %>%
+       mutate(female = ifelse(riagendr == '2',1,0)) %>%
+       select(-riagendr)
+
+
+test_pred <- predict(knn_fit, newdata = na.omit(test_nutri))
+
+confusionMatrix(test_pred,na.omit(test_nutri)$depression)
+
+
+### step 2: what about SES?
+imputed_train_SES = imputed_train[,c(1,2,4:11)]
+need_to_expand = imputed_train_SES[,c(2,4:9)] 
+
+need_to_expand = need_to_expand %>%
+                 transform(riagendr,riagendr = ifelse(riagendr==1,'M','F')) %>%
+                 mutate(ridreth3 = recode(ridreth3, 
+                                          '1' = 'Mexican',
+                                          '2' = 'Other Hispanic',
+                                          '3' ='Non-Hispanic White', 
+                                          '4' = 'Non-Hispanic Black', 
+                                          '6' = 'Non-Hispanic Asian', 
+                                          '7' = 'Other Race'))%>%
+                 mutate(dmdcitzn = recode(dmdcitzn,
+                                          '1' = 'Citizen by birth or naturalization',
+                                          '2' = 'Not a citizen of the US',
+                                          '7' = 'citizen-Refused',
+                                          '9' = 'citizen-Do Not Know'
+                                          )) %>%
+                 mutate(dmdeduc2 = recode(dmdeduc2,
+                                          '1' = 'Less than 9th grade',
+                                          '2' = '9-11th grade',
+                                          '3' = 'High school graduate',
+                                          '4' = 'Some college or AA degree',
+                                          '5' = 'College graduate or above',
+                                          '7' = 'education-Refused',
+                                          '9' = 'education-Do Not Know'
+                                          )) %>%
+                 mutate(dmdmartl = recode(dmdmartl,
+                                          '1' = 'Married',
+                                          '2' = 'Widowed',
+                                          '3' = 'Divorced',
+                                          '4' = 'Separated',
+                                          '5' = 'Never married',
+                                          '6' = 'Living with partner',
+                                          '77' = 'marital-Refused',
+                                          '99' = 'marital-Do Not Know'
+                                      )) %>%
+                 mutate(dmdhhsiz = recode(dmdhhsiz,
+                                          '7' = '7+'
+                                         ))%>%
+                 mutate(indfmin2 = recode(indfmin2,
+                                          '1' = 'Under $20,000',
+                                          '2' = 'Under $20,000',
+                                          '3' = 'Under $20,000',
+                                          '4' = 'Under $20,000',
+                                          '13'= 'Under $20,000', 
+                                          '5' = '$20,000 - $75,000',
+                                          '6' = '$20,000 - $75,000',
+                                          '7' = '$20,000 - $75,000',
+                                          '8' = '$20,000 - $75,000',
+                                          '9' = '$20,000 - $75,000', 
+                                          '10' = '$20,000 - $75,000',
+                                         '14' = '$75,000 to $99,999',
+                                         '15' =  '$100,000 and Over',
+                                          '77' = 'income-Refused',
+                                          '99' =  'income-Do Not Know'
+                                          ))
+  
+need_to_expand = need_to_expand[,c(1:7)]
+need_to_expand$ID <- seq.int(nrow(need_to_expand))
+
+library(data.table)
+library(mltools)
+
+need_to_expand = dcast(melt(need_to_expand, id.vars='ID'), ID ~ variable + value, fun = length)
+
+need_to_expand_train = need_to_expand %>% select(-ID)
+
+depression = imputed_train_SES$depression
+imputed_train_SES =  cbind(depression, need_to_expand_train)
+imputed_train_SES = na.omit(imputed_train_SES)
+set.seed(3333)
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+knn_fit <- train(depression ~., data =imputed_train_SES, method = "knn",
+ trControl=trctrl,
+ preProcess = c("center", "scale"),
+ tuneLength = 10)
+
+knn_fit
+
+test_SES = test[,c(1,2,4:11)]
+test_SES = test_SES[,c(1,3:8)] 
+need_to_expand = test_SES %>%
+                 transform(riagendr,riagendr = ifelse(riagendr==1,'M','F')) %>%
+                 mutate(ridreth3 = recode(ridreth3, 
+                                          '1' = 'Mexican',
+                                          '2' = 'Other Hispanic',
+                                          '3' ='Non-Hispanic White', 
+                                          '4' = 'Non-Hispanic Black', 
+                                          '6' = 'Non-Hispanic Asian', 
+                                          '7' = 'Other Race'))%>%
+                 mutate(dmdcitzn = recode(dmdcitzn,
+                                          '1' = 'Citizen by birth or naturalization',
+                                          '2' = 'Not a citizen of the US',
+                                          '7' = 'citizen-Refused',
+                                          '9' = 'citizen-Do Not Know'
+                                          )) %>%
+                 mutate(dmdeduc2 = recode(dmdeduc2,
+                                          '1' = 'Less than 9th grade',
+                                          '2' = '9-11th grade',
+                                          '3' = 'High school graduate',
+                                          '4' = 'Some college or AA degree',
+                                          '5' = 'College graduate or above',
+                                          '7' = 'education-Refused',
+                                          '9' = 'education-Do Not Know'
+                                          )) %>%
+                 mutate(dmdmartl = recode(dmdmartl,
+                                          '1' = 'Married',
+                                          '2' = 'Widowed',
+                                          '3' = 'Divorced',
+                                          '4' = 'Separated',
+                                          '5' = 'Never married',
+                                          '6' = 'Living with partner',
+                                          '77' = 'marital-Refused',
+                                          '99' = 'marital-Do Not Know'
+                                      )) %>%
+                 mutate(dmdhhsiz = recode(dmdhhsiz,
+                                          '7' = '7+'
+                                         ))%>%
+                 mutate(indfmin2 = recode(indfmin2,
+                                          '1' = 'Under $20,000',
+                                          '2' = 'Under $20,000',
+                                          '3' = 'Under $20,000',
+                                          '4' = 'Under $20,000',
+                                          '13'= 'Under $20,000', 
+                                          '5' = '$20,000 - $75,000',
+                                          '6' = '$20,000 - $75,000',
+                                          '7' = '$20,000 - $75,000',
+                                          '8' = '$20,000 - $75,000',
+                                          '9' = '$20,000 - $75,000', 
+                                          '10' = '$20,000 - $75,000',
+                                         '14' = '$75,000 to $99,999',
+                                         '15' =  '$100,000 and Over',
+                                          '77' = 'income-Refused',
+                                          '99' =  'income-Do Not Know'
+                                          ))
+
+need_to_expand = need_to_expand[,c(1:7)]
+need_to_expand$ID <- seq.int(nrow(need_to_expand))
+
+library(data.table)
+library(mltools)
+
+need_to_expand = dcast(melt(need_to_expand, id.vars='ID'), ID ~ variable + value, fun = length)
+
+need_to_expand_test = need_to_expand %>% select(-ID)
+
+depression = test$depression
+test_SES =  cbind(depression, need_to_expand_test)
+test_SES = na.omit(test_SES)
+
+test_pred <- predict(knn_fit, newdata = test_SES %>% select(-depression))
+confusionMatrix(test_pred,test_SES$depression)
+
+
+### step 3: Combine both efforts
+all_train = cbind(need_to_expand_train,imputed_train_nutri)
+all_train = all_train %>% select(-c(male,female))
+all_train = na.omit(all_train)
+all_test = cbind(need_to_expand_test,test_nutri)
+all_test = all_test %>% select(-c(male,female))
+all_test = na.omit(all_test)
+set.seed(3333)
+trctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+knn_fit <- train(depression ~., data =all_train, method = "knn",
+ trControl=trctrl,
+ preProcess = c("center", "scale"),
+ tuneLength = 10)
+
+knn_fit
+
+test_pred <- predict(knn_fit, newdata = all_test %>% select(-depression))
+confusionMatrix(test_pred,all_test$depression)
+```
+
+```{r NN, message = FALSE, warning = FALSE}
+# normalize data and use sequential model
+library(keras)
+library(abind)
+all_train = all_train %>%
+  mutate(dmdeduc2_NA=0) %>%
+  mutate('dmdmartl_marital-Refused' =0) %>%
+  mutate(dmdmartl_NA = 0) %>%
+  mutate(indfmin2_NA = 0)
+xtrain = all_train %>% select(-depression)
+xtrain[,c(40:100)] = scale(xtrain[,c(40:100)]) 
+xtrain[,-c(40:100)] = lapply(xtrain[,-c(40:100)],factor)
+xtrain = xtrain %>% as.matrix()
+ytrain = all_train$depression
+ytrain = as.numeric(ytrain) %>% as.matrix()
+
+NNmodel = keras_model_sequential()
+### 
+NNmodel %>% 
+  layer_dense(units = 128, activation = 'relu',
+                input_shape = c(ncol(xtrain))) %>%   # "input_shape" specified at first layer
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 64, activation = 'sigmoid') %>%
+  layer_dense(units = 32, activation = 'sigmoid') %>%
+  layer_dense(units = 5,
+             activation = 'softmax', #non-linearity creation
+             )
+
+summary(NNmodel)
+
+### Specify loss, batch size, optimizer, extra performance measures
+NNmodel %>% compile(
+  optimizer = optimizer_adam(lr = 0.0001), 
+  loss = loss_categorical_crossentropy,
+  metrics = "accuracy"
+)
+
+history = 
+  NNmodel %>% fit(xtrain, ytrain,
+              epochs = 20, #how long we train this data
+              batch_size = 16, #how many samples to use for gradient update
+              validation_split = 0.2, shuffle=T #validation_split: hold out traning data for validation
+  )
+
+xtest = all_test %>% select(-depression)
+xtest[,c(44:104)] = scale(xtest[,c(44:104)]) 
+xtest[,-c(44:104)] = lapply(xtest[,-c(44:104)],factor) 
+xtest = xtest %>% as.matrix()
+ytest = all_test$depression
+ytest = as.numeric(ytest) %>% as.matrix()
+
+NNmodel %>% evaluate(xtest, ytest)
+
+```
