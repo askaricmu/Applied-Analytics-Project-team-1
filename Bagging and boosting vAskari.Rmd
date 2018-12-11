@@ -1,0 +1,308 @@
+---
+title: "Project code - baging and boosting"
+author: "Askari"
+date: "November 19, 2018"
+fig_width: 6 
+fig_height: 4 
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+### Load helper packages ###
+loadlibs = function(libs) {
+  for(lib in libs) {
+    class(lib)
+    if(!do.call(require,as.list(lib))) {install.packages(lib)}
+    do.call(require,as.list(lib))
+  }
+}
+libs = c("tidyr","magrittr","purrr","dplyr","stringr","readr","data.table", "lubridate","caret")
+loadlibs(libs)
+```
+
+
+## Load the file
+```{r}
+workDirectory = "C:/Users/Owner/Documents/CMUA Study/Fall 2018 - Semester 3/95-845 Applied Analytics - the Machine Learning pipline/Project/Chosen DataSet/Cleaned data/Applied-Analytics-Project-team-1-master/"
+setwd(workDirectory)
+
+fileName = "2015-16_3.csv"
+Dep_Master_data = read.csv(fileName,stringsAsFactors = FALSE)
+```
+
+
+
+
+## Impute missing values. Drop index column
+```{r}
+# drop index column from the data set
+Dep_Master_data = Dep_Master_data %>% select (-X)
+
+# impute missing values
+library("mice")
+imputed = mice(Dep_Master_data %>%
+              select(-depression) %>% 
+              mutate_if(is.character, as.factor),m=1,maxit = 1)
+
+# Get imputed data set
+imputed_dataset = complete(imputed) %>% as_tibble()
+
+# add the depression column back to it
+imputed_dataset$depression = Dep_Master_data$depression
+```
+
+```{r}
+```
+
+
+## Create training and test sets
+```{r}
+
+# drop rows where depression value is missing
+imputed_data_without_dep_NAs = imputed_dataset[complete.cases(imputed_dataset), ]
+permuted_master_data = imputed_data_without_dep_NAs[sample(1:nrow(imputed_data_without_dep_NAs)),]  # permute rows
+
+
+train = permuted_master_data[1:(nrow(permuted_master_data)*0.6),] # select first 60% of permuted data set as training set
+test = permuted_master_data[((nrow(permuted_master_data)*0.6)+1):nrow(permuted_master_data),] # select last 40%f of permuted data set as test set
+
+#Class distribution in test & train
+paste0("Class percentage in training set: ")
+prop.table(table(train$depression))*100
+
+
+paste0("Class percentage in test set: ")
+prop.table(table(test$depression))*100
+
+    
+library(scales)
+#train
+train$wtmec2yr = rescale(train$wtmec2yr, to=c(1,10))
+train$wtmec2yr = ceiling(train$wtmec2yr)
+train <- train[rep(row.names(train), train$wtmec2yr),1:72] #check if 65 or 72
+train$wtmec2yr<-NULL
+#test
+test$wtmec2yr = rescale(test$wtmec2yr, to=c(1,10))
+test$wtmec2yr = ceiling(test$wtmec2yr)
+test <- test[rep(row.names(test), test$wtmec2yr),1:72]
+test$wtmec2yr<-NULL
+
+paste0("Class percentage in training set after scaling: ")
+prop.table(table(train$depression))*100
+
+
+paste0("Class percentage in test set after scaling: ")
+prop.table(table(test$depression))*100
+
+```
+
+```{r}
+#Running Bagging-Random Forest Model
+library("randomForest")
+
+#Training the model
+forest = randomForest(formula = as.factor(depression) ~ .,
+                      data=train )
+#Printing the results - accuracy & confusion matrix
+library(e1071)
+library(caret)
+test$depression<-as.factor(test$depression)
+confusionMatrix(predict(forest,test),test$depression)
+paste0("As we can see from these results, the model is making all predictions as depression='minimal'. This is because we have unbalanced class distribution. The majority class (~75%) is depression='minimal' and the model is able to achieve 75% accuracy by predicting everything as minimal(No information rate). This model cannot be adopted.")
+```
+
+```{r}
+paste0("To experiment we tried converting the multi-class classification problem into a binary classification problem and compare results. We converted minimal & mild levels of depression to Low level of depression & the remaining levels to High.")
+paste0("(ROSE)To take care of the class imbalance we are trying to change the data by implementing over sampling.")
+#Converting the classes into a binary classification problem
+permuted_master_data$HighLowFlag<-ifelse(permuted_master_data$depression=="minimal" | permuted_master_data$depression=="mild","Low","High") 
+
+permuted_master_data$depression<-NULL
+#Splitting into train-test
+train = permuted_master_data[1:(nrow(permuted_master_data)*0.6),] # select first 60% of permuted data set as training set
+test = permuted_master_data[((nrow(permuted_master_data)*0.6)+1):nrow(permuted_master_data),] # select last 40%f of permuted data set as test set
+
+#Oversampling
+library(ROSE)
+over <- ovun.sample(HighLowFlag~.,data = train, method ="over",N=5612)$data
+train_OS<-over
+
+#Training the model
+forest_BC = randomForest(formula = as.factor(HighLowFlag) ~ .,
+                      data=train_OS )
+#Printing the results - accuracy & confusion matrix
+library(e1071)
+library(caret)
+test$HighLowFlag<-as.factor(test$HighLowFlag)
+confusionMatrix(predict(forest_BC,test),test$HighLowFlag)
+
+paste0("As we can see from these results, the conversion of the multi class problem into binary, did not solve the problem. Though the model is learning on a completely balanced data, it is making all predictions as depression='Low'. This model cannot be adopted.") 
+
+```
+
+```{r}
+paste0("Another approach we are adopting to improve the model performance is to apply SMOTE.")
+
+#Over sampling - SMOTE Process
+train = permuted_master_data[1:(nrow(permuted_master_data)*0.6),] # select first 60% of permuted data set as training set
+#Since SMOTE requires a factored dependant variable, converting the depression column to factor
+train$HighLowFlag<-as.factor(train$HighLowFlag)
+train_SMOTE<-SMOTE(HighLowFlag~.,as.data.frame(train),perc.over = 500, perc.under=120)
+#Changing dependant column back to Character
+train_SMOTE$HighLowFlag<-as.character(train_SMOTE$HighLowFlag)
+
+#Training the model
+forest_SMOTE = randomForest(formula = as.factor(HighLowFlag) ~ .,
+                      data=train_SMOTE )
+#Printing the results - accuracy & confusion matrix
+library(e1071)
+library(caret)
+test$HighLowFlag<-as.factor(test$HighLowFlag)
+confusionMatrix(predict(forest_SMOTE,test),test$HighLowFlag)
+
+paste0("It was interesting to see that oversampling through SMOTE gave much better results than ROSE. The model has started to predict the 'High' depression cases, which is a good sign. Though the number of 'High' class predictions are not very high, it has atleast given us a direction in which we could possibly proceed.") 
+
+```
+
+
+
+
+
+## Bagging - Ignore now
+```{r fig1, fig.height = 10, fig.width = 5}
+# library("randomForest")
+# library("pROC")
+# 
+# 
+# forest = randomForest(formula = as.factor(depression) ~ .,
+#                       data=train )
+# 
+# library(e1071)
+# library(caret)
+# test$depression<-as.factor(test$depression)
+# confusionMatrix(predict(forest,test),test$depression)
+# #Extracting the importance of the independent varaibles from the model created
+# feature_imp = forest$importance
+# #Getting top 10 features
+# feature_imp=feature_imp[order(feature_imp[,1], decreasing = TRUE),]
+# feature_10imp=head(feature_imp,10)
+# 
+# #fit=randomForest(factor(depression)~., data=train, classwt = "wtmec2yr")
+# 
+# #varImp(fit)
+# 
+# # plot importance
+# #varImpPlot(fit,type=2)
+# 
+# # make predictions using random forest
+# predictRF =NULL
+# 
+# # making probility based predictions for ROC
+# #predictRF = data.frame(preds=(forest %>% predict(test, type="prob")))
+# 
+# ## making class level predictions for accuracy
+# predictRF_accuracy = data.frame(preds=(forest %>% predict(test, type="response")))
+# 
+# #roc.multi = multiclass.roc(test_without_NAs$depression, predictions)
+# 
+# ## claculate Accuracy
+# columns_for_accuracy = cbind(predictRF_accuracy,test$depression)
+# names(columns_for_accuracy) = c("preds","truth")
+# columns_for_accuracy$equalityFlag = ifelse(columns_for_accuracy$preds==columns_for_accuracy$truth,1,0)
+# 
+# sum_correct_preds = sum(columns_for_accuracy$equalityFlag)
+# accuracy = sum_correct_preds/nrow(columns_for_accuracy)
+# 
+# paste0("Accuracy of bagging: ", accuracy)
+# 
+# #Plotting the ROC curve:
+# # columns_for_ROC =  
+# #   test_without_NAs %>%
+# #   select(depression) %>%
+# #   bind_cols(predictRF) %>% mutate(depression=depression=="severe")
+# 
+# #Converting the actual and predicted values to a data frame
+# #predictionColumnROC = data.frame(columns_for_ROC$preds.severe)
+# #labelColumnROC = data.frame(columns_for_ROC$depression)
+# 
+# #plotting the confusion matrix - Predicting majority as minimal as that is major class
+# library(e1071)
+# cm <- confusionMatrix(data = columns_for_accuracy$pred, reference = columns_for_accuracy$truth)
+# 
+# 
+# #Making a ggplot of the ROC Curve:
+# # library("ggplot2")
+# # ROCR::prediction(predictions=predictionColumnROC,
+# #            labels=labelColumnROC) %>%
+# #   ROCR::performance("tpr", "fpr") %>%
+# #   (function(.) data.frame(FPR=.@x.values[[1]], TPR=.@y.values[[1]]) %>% as_tibble())(.) %>%
+# #   ggplot(data=.) + geom_line(aes(x=FPR,y=TPR))
+# # 
+# # library("pROC")
+# # rocRF = roc(test_without_NAs$depression=="severe", predictRF$preds.severe)
+# # aucRF=format(round(auc(rocRF),4),nsmall=4)
+# # paste0("AUC of bagging: ", aucRF)
+
+```
+
+
+## Ada Boosting -ROSE (oversampling)
+```{r}
+paste0("To deep dive further into experimeting with different models, we cosndiered boosting. The model we decided to experiment with was the ada boost model by using ROSE for oversampling.")
+#Creating a ada boosted forest model
+library(ada)
+
+#Tring ROSE oversampling to convert the imbalanced class into a perfectly balanced
+over <- ovun.sample(HighLowFlag~.,data = train, method ="over",N=5612)$data
+
+train_ada = over
+train_ada$HighLowFlag = train_ada$HighLowFlag %>% as.character
+
+aforest = ada(formula = HighLowFlag ~ .,
+              data=train_ada,
+              iter=10)
+
+confusionMatrix(predict(aforest,test),test$HighLowFlag)
+
+paste0("We see that ada boost model with ROSE oversampling has a better ability to capture the high level of depression when compared to random forest with ROSE oversampling.")
+
+```
+# Boosting - SMOTE (oversampling)
+```{r}
+paste0("Due to the promising results of Ada Boost, we decided to try SMOTE oversampling based on the assumption that SMOTE had performed better when run on random forest. ")
+
+#Creating a ada boosted forest model
+#Tring SMOTE oversampling to convert the imbalanced class into a perfectly balanced
+train_SMOTE<-SMOTE(HighLowFlag~.,as.data.frame(train),perc.over = 200,perc.under = 150)
+
+train_ada = train_SMOTE
+train_ada$HighLowFlag = train_ada$HighLowFlag %>% as.character
+
+aforest = ada(formula = HighLowFlag ~ .,
+              data=train_ada,
+              iter=10)
+
+confusionMatrix(predict(aforest,test),test$HighLowFlag)
+
+paste0("We see that ada boost model with SMOTE oversampling has given us the best results so far, capturing most of the highly depressed cases whereas predicing a good amount of the low depressed cases as well.")
+
+
+# Still working on the following code to figure out most important featrues
+# paste0("Finding the most important features of the ada boost model:")
+# library(rpart)
+# aforest$weights
+
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
