@@ -1,0 +1,406 @@
+---
+title: "Project code - baging and boosting"
+author: "Askari"
+date: "November 19, 2018"
+fig_width: 6 
+fig_height: 4 
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+### Load helper packages ###
+loadlibs = function(libs) {
+  for(lib in libs) {
+    class(lib)
+    if(!do.call(require,as.list(lib))) {install.packages(lib)}
+    do.call(require,as.list(lib))
+  }
+}
+libs = c("tidyr","magrittr","purrr","dplyr","stringr","readr","data.table", "lubridate","caret")
+loadlibs(libs)
+```
+
+
+## Load the file
+```{r}
+workDirectory = "C:/Users/Owner/Documents/CMUA Study/Fall 2018 - Semester 3/95-845 Applied Analytics - the Machine Learning pipline/Project/Chosen DataSet/Cleaned data/Applied-Analytics-Project-team-1-master/"
+setwd(workDirectory)
+
+fileName = "2015-16_3.csv"
+Dep_Master_data = read.csv(fileName,stringsAsFactors = FALSE)
+```
+
+
+
+
+## Impute missing values. Drop index column
+```{r}
+# drop index column from the data set
+Dep_Master_data = Dep_Master_data %>% select (-X)
+
+# impute missing values
+library("mice")
+imputed = mice(Dep_Master_data %>%
+              select(-depression) %>% 
+              mutate_if(is.character, as.factor),m=1,maxit = 1)
+
+# Get imputed data set
+imputed_dataset = complete(imputed) %>% as_tibble()
+
+# add the depression column back to it
+imputed_dataset$depression = Dep_Master_data$depression
+```
+
+```{r}
+```
+
+
+## Create training and test sets
+```{r}
+
+# drop rows where depression value is missing
+imputed_data_without_dep_NAs = imputed_dataset[complete.cases(imputed_dataset), ]
+permuted_master_data = imputed_data_without_dep_NAs[sample(1:nrow(imputed_data_without_dep_NAs)),]  # permute rows
+
+# write.csv(imputed_data_without_dep_NAs, file = "C:\\Users\\Owner\\Documents\\CMUA Study\\Fall 2018 - Semester 3\\95-845 Applied Analytics - the Machine Learning pipline\\myData.csv")
+
+train = permuted_master_data[1:(nrow(permuted_master_data)*0.8),] # select first 60% of permuted data set as training set
+test = permuted_master_data[((nrow(permuted_master_data)*0.8)+1):nrow(permuted_master_data),] # select last 40%f of permuted dta set as test set
+
+#Class distribution in test & train
+paste0("Class percentage in training set: ")
+prop.table(table(train$depression))*100
+
+
+paste0("Class percentage in test set: ")
+prop.table(table(test$depression))*100
+
+    
+library(scales)
+#train
+train$wtmec2yr = rescale(train$wtmec2yr, to=c(1,10))
+train$wtmec2yr = ceiling(train$wtmec2yr)
+train <- train[rep(row.names(train), train$wtmec2yr),1:72] #check if 65 or 72
+train$wtmec2yr<-NULL
+#test
+test$wtmec2yr = rescale(test$wtmec2yr, to=c(1,10))
+test$wtmec2yr = ceiling(test$wtmec2yr)
+test <- test[rep(row.names(test), test$wtmec2yr),1:72]
+test$wtmec2yr<-NULL
+
+paste0("Class percentage in training set after scaling: ")
+prop.table(table(train$depression))*100
+
+
+paste0("Class percentage in test set after scaling: ")
+prop.table(table(test$depression))*100
+
+```
+
+# Bagging
+```{r}
+#Running Bagging-Random Forest Model
+library("randomForest")
+
+#Training the model
+forest = randomForest(formula = as.factor(depression) ~ .,
+                      data=train )
+#Printing the results - accuracy & confusion matrix
+library(e1071)
+library(caret)
+test$depression<-as.factor(test$depression)
+confusionMatrix(predict(forest,test),test$depression)
+paste0("As we can see from these results, the model is making all predictions as depression='minimal'. This is because we have unbalanced class distribution. The majority class (~75%) is depression='minimal' and the model is able to achieve 75% accuracy by predicting everything as minimal(No information rate). This model cannot be adopted.")
+```
+
+```{r}
+paste0("To experiment we tried converting the multi-class classification problem into a binary classification problem and compare results. We converted minimal & mild levels of depression to Low level of depression & the remaining levels to High.")
+paste0("(ROSE)To take care of the class imbalance we are trying to change the data by implementing over sampling.")
+#Converting the classes into a binary classification problem
+permuted_master_data$HighLowFlag<-ifelse(permuted_master_data$depression=="minimal" | permuted_master_data$depression=="mild","Low","High") 
+
+permuted_master_data$depression<-NULL
+#Splitting into train-test
+train = permuted_master_data[1:(nrow(permuted_master_data)*0.8),] # select first 60% of permuted data set as training set
+test = permuted_master_data[((nrow(permuted_master_data)*0.8)+1):nrow(permuted_master_data),] # select last 40%f of permuted data set as test set
+
+#Oversampling
+library(ROSE)
+over <- ovun.sample(HighLowFlag~.,data = train, method ="over",N=5612)$data
+train_OS<-over
+
+#Training the model
+forest_BC = randomForest(formula = as.factor(HighLowFlag) ~ .,
+                      data=train_OS )
+#Printing the results - accuracy & confusion matrix
+library(e1071)
+library(caret)
+test$HighLowFlag<-as.factor(test$HighLowFlag)
+confusionMatrix(predict(forest_BC,test),test$HighLowFlag)
+
+
+#Plotting the ROC curve:
+predict_ROSE = data.frame(predict(forest_BC,test))
+predict_ROSE_Bagging<-predict_ROSE
+columns_for_ROC = test %>% select(HighLowFlag) %>% bind_cols(predict_ROSE) %>% mutate(HighLowFlag=HighLowFlag)
+
+#coNVERTING LOW INTO 0 & HIGH INTO 1
+columns_for_ROC$HighLowFlag<-ifelse(columns_for_ROC$HighLowFlag=="High",1,0)
+columns_for_ROC$predict.forest_BC..test.<-ifelse(columns_for_ROC$predict.forest_BC..test.=="High",1,0)
+
+
+#Converting the actual and predicted values to a data frame
+predictionColumnROC = data.frame(columns_for_ROC$predict.forest_BC..test.)
+labelColumnROC = data.frame(columns_for_ROC$HighLowFlag)
+
+#Making a ggplot of the ROC Curve:
+library("ggplot2")
+ROCR::prediction(predictions=predictionColumnROC,
+           labels=labelColumnROC) %>%
+  ROCR::performance("tpr", "fpr") %>%
+  (function(.) data.frame(FPR=.@x.values[[1]], TPR=.@y.values[[1]]) %>% as_tibble())(.) %>%
+  ggplot(data=.) + geom_line(aes(x=FPR,y=TPR))
+
+paste0("As we can see from these results, the conversion of the multi class problem into binary, did not solve the problem. Though the model is learning on a completely balanced data, it is making all predictions as depression='Low'. This model cannot be adopted.") 
+
+```
+
+```{r}
+library(DMwR)
+paste0("Another approach we are adopting to improve the model performance is to apply SMOTE.")
+
+#Over sampling - SMOTE Process
+train = permuted_master_data[1:(nrow(permuted_master_data)*0.6),] # select first 60% of permuted data set as training set
+
+test = permuted_master_data[((nrow(permuted_master_data)*0.6)+1):nrow(permuted_master_data),] # select last 40% of of permuted data set as test set
+
+#Since SMOTE requires a factored dependant variable, converting the depression column to factor
+train$HighLowFlag<-as.factor(train$HighLowFlag)
+train_SMOTE<-SMOTE(HighLowFlag~.,as.data.frame(train),perc.over = 500, perc.under=120)
+#Changing dependant column back to Character
+train_SMOTE$HighLowFlag<-as.character(train_SMOTE$HighLowFlag)
+
+#Training the model
+forest_SMOTE = randomForest(formula = as.factor(HighLowFlag) ~ .,
+                      data=train_SMOTE )
+#Printing the results - accuracy & confusion matrix
+library(e1071)
+library(caret)
+test$HighLowFlag<-as.factor(test$HighLowFlag)
+confusionMatrix(predict(forest_SMOTE,test),test$HighLowFlag)
+
+#Plotting the ROC curve:
+predict_SMOTE = data.frame(predict(forest_SMOTE,test))
+predict_SMOTE_bagging<-predict_SMOTE
+columns_for_ROC = test %>% select(HighLowFlag) %>% bind_cols(predict_SMOTE) %>% mutate(HighLowFlag=HighLowFlag)
+
+#coNVERTING LOW INTO 0 & HIGH INTO 1
+columns_for_ROC$HighLowFlag<-ifelse(columns_for_ROC$HighLowFlag=="High",1,0)
+columns_for_ROC$predict.forest_SMOTE..test.<-ifelse(columns_for_ROC$predict.forest_SMOTE..test.=="High",1,0)
+
+
+#Converting the actual and predicted values to a data frame
+predictionColumnROC = data.frame(columns_for_ROC$predict.forest_SMOTE..test.)
+labelColumnROC = data.frame(columns_for_ROC$HighLowFlag)
+
+#Making a ggplot of the ROC Curve:
+library("ggplot2")
+ROCR::prediction(predictions=predictionColumnROC,
+           labels=labelColumnROC) %>%
+  ROCR::performance("tpr", "fpr") %>%
+  (function(.) data.frame(FPR=.@x.values[[1]], TPR=.@y.values[[1]]) %>% as_tibble())(.) %>%
+  ggplot(data=.) + geom_line(aes(x=FPR,y=TPR))
+
+
+paste0("It was interesting to see that oversampling through SMOTE gave much better results than ROSE. The model has started to predict the 'High' depression cases, which is a good sign. Though the number of 'High' class predictions are not very high, it has atleast given us a direction in which we could possibly proceed.") 
+
+```
+
+
+
+## Ada Boosting -ROSE (oversampling)
+```{r}
+paste0("To deep dive further into experimeting with different models, we cosndiered boosting. The model we decided to experiment with was the ada boost model by using ROSE for oversampling.")
+#Creating a ada boosted forest model
+library(ada)
+library(caret)
+
+
+#Tring ROSE oversampling to convert the imbalanced class into a perfectly balanced
+over <- ovun.sample(HighLowFlag~.,data = train, method ="over",N=5612)$data
+
+train_ada = over
+train_ada$HighLowFlag = train_ada$HighLowFlag %>% as.character
+
+aforest = ada(formula = HighLowFlag ~ .,
+              data=train_ada, loss = "logistic",
+              iter=10)
+
+
+confusionMatrix(predict(aforest,test),test$HighLowFlag)
+
+predict_ada = as.data.frame(predict(aforest,test))
+predict_ada_ROSE<-predict_ada
+#Plotting the ROC curve:
+
+columns_for_ROC = test %>% select(HighLowFlag) %>% bind_cols(predict_ada) %>% mutate(HighLowFlag=HighLowFlag)
+
+#coNVERTING LOW INTO 0 & HIGH INTO 1
+columns_for_ROC$HighLowFlag<-ifelse(columns_for_ROC$HighLowFlag=="High",1,0)
+columns_for_ROC$`predict(aforest, test)`<-ifelse(columns_for_ROC$`predict(aforest, test)`=="High",1,0)
+
+
+#Converting the actual and predicted values to a data frame
+predictionColumnROC = data.frame(columns_for_ROC$`predict(aforest, test)`)
+labelColumnROC = data.frame(columns_for_ROC$HighLowFlag)
+# 
+# #plotting the confusion matrix - Predicting majority as minimal as that is major class
+# library(e1071)
+# cm <- confusionMatrix(data = columns_for_accuracy$pred, reference = columns_for_accuracy$truth)
+# 
+# 
+#Making a ggplot of the ROC Curve:
+library("ggplot2")
+ROCR::prediction(predictions=predictionColumnROC,
+           labels=labelColumnROC) %>%
+  ROCR::performance("tpr", "fpr") %>%
+  (function(.) data.frame(FPR=.@x.values[[1]], TPR=.@y.values[[1]]) %>% as_tibble())(.) %>%
+  ggplot(data=.) + geom_line(aes(x=FPR,y=TPR))
+
+# library("pROC")
+# labelColumnROC = as.factor(labelColumnROC)
+# predictionColumnROC = as.factor(predictionColumnROC)
+# 
+# rocRF = roc(labelColumnROC, predictionColumnROC)
+# aucRF=format(round(auc(rocRF),4),nsmall=4)
+# paste0("AUC of bagging: ", aucRF)
+
+
+
+paste0("We see that ada boost model with ROSE oversampling has a better ability to capture the high level of depression when compared to random forest with ROSE oversampling.")
+
+```
+
+
+# Boosting - SMOTE (oversampling)
+```{r, fig.height = 35, fig.width =20}
+paste0("Due to the promising results of Ada Boost, we decided to try SMOTE oversampling based on the assumption that SMOTE had performed better when run on random forest.")
+
+#Creating an ada boosted forest model
+#Tring SMOTE oversampling to convert the imbalanced class into a perfectly balanced
+train_SMOTE<-SMOTE(HighLowFlag~.,as.data.frame(train),perc.over = 200,perc.under = 150)
+
+train_ada = train_SMOTE
+train_ada$HighLowFlag = train_ada$HighLowFlag %>% as.character
+
+aforest = ada(formula = HighLowFlag ~ .,
+              data=train_ada, loss = "logistic",
+              iter=10)
+
+confusionMatrix(predict(aforest,test),test$HighLowFlag)
+
+paste0("We see that ada boost model with SMOTE oversampling has given us the best results so far, capturing most of the highly depressed cases whereas predicing a good amount of the low depressed cases as well.")
+
+#Plotting the ROC curve:
+predict_ada<-data.frame(predict(aforest,test))
+predict_ada_SMOTE<-predict_ada
+
+columns_for_ROC = test %>% select(HighLowFlag) %>% bind_cols(predict_ada) %>% mutate(HighLowFlag=HighLowFlag)
+
+#coNVERTING LOW INTO 0 & HIGH INTO 1
+columns_for_ROC$HighLowFlag<-ifelse(columns_for_ROC$HighLowFlag=="High",1,0)
+columns_for_ROC$predict.aforest..test.<-ifelse(columns_for_ROC$predict.aforest..test.=="High",1,0)
+
+
+#Converting the actual and predicted values to a data frame
+predictionColumnROC = data.frame(columns_for_ROC$predict.aforest..test.)
+labelColumnROC = data.frame(columns_for_ROC$HighLowFlag)
+
+#Making a ggplot of the ROC Curve:
+library("ggplot2")
+ROCR::prediction(predictions=predictionColumnROC,
+           labels=labelColumnROC) %>%
+  ROCR::performance("tpr", "fpr") %>%
+  (function(.) data.frame(FPR=.@x.values[[1]], TPR=.@y.values[[1]]) %>% as_tibble())(.) %>%
+  ggplot(data=.) + geom_line(aes(x=FPR,y=TPR))
+
+# Still working on the following code to figure out most important featrues
+# paste0("Finding the most important features of the ada boost model:")
+# library(rpart)
+# aforest$weights
+
+varplot(aforest)
+
+```
+
+#Gradient Boosting
+```{r}
+
+# Converting the class values to numeric
+train_gbm = train_SMOTE #train_SMOTE
+train_gbm$HighLowFlag = ifelse(train_gbm$HighLowFlag=="High",1,0) 
+
+#Creating gradient boosted forest model
+library(gbm)
+library(ggplot2)
+gforest = gbm(formula = HighLowFlag ~ .,
+              data=train_gbm,
+              interaction.depth=15,
+              cv.folds = 10)
+
+#Make predictions
+predicted_gbm = data.frame(predict(gforest, test,
+        n.trees=gforest$n.trees,
+        type = "response"))
+
+#Plotting the ROC curve:
+
+columns_for_ROC = test %>% select(HighLowFlag) %>% bind_cols(predicted_gbm) %>% mutate(HighLowFlag=HighLowFlag)
+
+#coNVERTING LOW INTO 0 & HIGH INTO 1
+columns_for_ROC$HighLowFlag<-ifelse(columns_for_ROC$HighLowFlag=="High",1,0)
+columns_for_ROC$predict.gforest..test..n.trees...gforest.n.trees..type....response..<-ifelse(columns_for_ROC$predict.gforest..test..n.trees...gforest.n.trees..type....response..>0.5,1,0)
+
+
+#Converting the actual and predicted values to a data frame
+predictionColumnROC = data.frame(columns_for_ROC$predict.gforest..test..n.trees...gforest.n.trees..type....response..)
+labelColumnROC = data.frame(columns_for_ROC$HighLowFlag)
+
+#Plotting the ROC curve:
+columns_for_ROC_gbm =  
+  test %>%
+  select(HighLowFlag) %>%
+  bind_cols(predictionColumnROC) %>% mutate(HighLowFlag=HighLowFlag==1)
+
+#Plotting the ROC Curve using ggplot:
+ROCR::prediction(predictions=predicted_gbm,
+           labels=test$HighLowFlag) %>%
+  ROCR::performance("tpr", "fpr") %>%
+  (function(.) data.frame(FPR=.@x.values[[1]], TPR=.@y.values[[1]]) %>% as_tibble())(.) %>%
+  ggplot(data=.) + geom_line(aes(x=FPR,y=TPR))
+
+important_features = data.frame(varImp(gforest, numTrees =20))
+important_features$ColumnNames <- (colnames(test[,1:(ncol(test)-1)]))
+important_features<-important_features[order(-important_features$Overall),]
+important_features
+
+cm = ifelse(predicted_gbm>0.5,"High","Low") %>% as.factor
+
+
+confusionMatrix(cm,test$HighLowFlag)
+
+```
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
